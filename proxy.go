@@ -1,14 +1,12 @@
 package main
 
 import (
-	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -48,48 +46,60 @@ func initTLSClient() error {
 	return err
 }
 
-// Create a TLS connection with the browser fingerprint using direct utls for proper fingerprinting
+// Create a TLS connection with the browser fingerprint using tls-client for proper fingerprinting
 func customTLSWrap(conn net.Conn, sni string) (net.Conn, error) {
-	// Get the client hello ID based on the configured browser profile
-	clientHelloID := getClientHelloID(Config.BrowserProfile)
-	
-	// Create a utls connection with the specific client hello
-	utlsConn := utls.UClient(conn, &utls.Config{
-		ServerName:         sni,
-		InsecureSkipVerify: true,
-	}, clientHelloID)
+	// Get the tls-client profile based on the configured browser profile
+	clientProfile := GetClientProfile(Config.BrowserProfile)
+
+	// Create a tlsClientConn with the specific client profile
+	tlsConn, err := tlsclient.NewTlsConn(&tlsclient.TlsConnConfig{
+		Conn:          conn,
+		ServerName:    sni,
+		ClientProfile: clientProfile,
+		SkipVerify:    true,
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("TLS connection creation failed: %v", err)
+	}
 
 	// Perform the handshake
-	if err := utlsConn.Handshake(); err != nil {
+	if err := tlsConn.Handshake(); err != nil {
 		return nil, fmt.Errorf("TLS handshake failed: %v", err)
 	}
-	
+
 	log.Printf("Connected to %s using browser profile: %s", sni, Config.BrowserProfile)
-	
-	return utlsConn, nil
+
+	return tlsConn, nil
 }
 
-// Map browser profile names to utls ClientHelloID
+// Map browser profile names to utls ClientHelloID for backward compatibility
 func getClientHelloID(profileName string) utls.ClientHelloID {
-	// Map common profile names to ClientHelloID values
+	// Map common profile names to precise ClientHelloID values
 	switch strings.ToLower(profileName) {
-	case "chrome133", "chrome133a":
-		return utls.HelloChrome_Auto
+	case "chrome133":
+		return utls.HelloChrome_133
 	case "chrome124":
-		return utls.HelloChrome_Auto
+		return utls.HelloChrome_124
 	case "chrome120":
-		return utls.HelloChrome_Auto
+		return utls.HelloChrome_120
+	case "chrome117":
+		return utls.HelloChrome_117
 	case "chrome110":
 		return utls.HelloChrome_110
 	case "chrome107":
 		return utls.HelloChrome_107
 	case "chrome104":
 		return utls.HelloChrome_104
-	case "firefox117", "firefox110":
-		return utls.HelloFirefox_Auto
+	case "firefox117":
+		return utls.HelloFirefox_117
+	case "firefox110":
+		return utls.HelloFirefox_110
 	case "firefox108":
 		return utls.HelloFirefox_108
-	case "safari18_0", "safari16_0":
+	case "safari18_0":
+		return utls.HelloSafari_16_0 // Using 16.0 as 18.0 may not be directly available in utls
+	case "safari16_0":
 		return utls.HelloSafari_16_0
 	case "safari_ios_18_0", "safari_ios_17_0":
 		return utls.HelloIOS_Auto
@@ -97,7 +107,7 @@ func getClientHelloID(profileName string) utls.ClientHelloID {
 		return utls.HelloIOS_16_0
 	default:
 		// Use Chrome as the default
-		return utls.HelloChrome_Auto
+		return utls.HelloChrome_133
 	}
 }
 
@@ -176,7 +186,7 @@ func handleHTTP(w http.ResponseWriter, req *http.Request) {
 func connect(sni string, destConn net.Conn, clientConn net.Conn) {
 	defer destConn.Close()
 	defer clientConn.Close()
-	
+
 	destTLSConn, err := customTLSWrap(destConn, sni)
 	if err != nil {
 		fmt.Println("TLS handshake failed: ", err)
@@ -186,6 +196,7 @@ func connect(sni string, destConn net.Conn, clientConn net.Conn) {
 	tlsCert, err := generateCertificate(sni)
 	if err != nil {
 		fmt.Println("Error generating certificate: ", err)
+		return
 	}
 
 	config := &tls.Config{
@@ -193,17 +204,29 @@ func connect(sni string, destConn net.Conn, clientConn net.Conn) {
 		Certificates:       []tls.Certificate{tlsCert},
 	}
 
-	// Get the negotiated protocol
+	// Get the negotiated protocol - with different handling depending on the connection type
 	var protocols string
-	if tlsConn, ok := destTLSConn.(*utls.UConn); ok {
-		state := tlsConn.ConnectionState()
+
+	// Try to get the negotiated protocol differently based on the connection type
+	// For tls-client connections
+	if tlsConn, ok := destTLSConn.(tlsclient.TlsConn); ok {
+		// tlsConn has TLS state info, extract negotiated protocol
+		state, err := tlsConn.ConnectionState()
+		if err == nil {
+			protocols = state.NegotiatedProtocol
+		}
+	} else if utlsConn, ok := destTLSConn.(*utls.UConn); ok {
+		// Fallback for direct utls connections
+		state := utlsConn.ConnectionState()
 		protocols = state.NegotiatedProtocol
 	}
 
 	if protocols == "h2" {
 		config.NextProtos = []string{"h2", "http/1.1"}
+	} else {
+		config.NextProtos = []string{"http/1.1"}
 	}
-	
+
 	clientTLSConn := tls.Server(
 		clientConn,
 		config,

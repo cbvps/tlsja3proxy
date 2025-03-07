@@ -48,9 +48,14 @@ func main() {
 	loadExistingCA()
 	generateSessionKey()
 
-	var err error
-	CustomDialer, err = NewUpstreamDialer(Config.Upstream, time.Second*10)
+	// Initialize the TLS client
+	err := initTLSClient()
+	if err != nil {
+		log.Println("Warning: Failed to initialize TLS client:", err)
+	}
 
+	// Setup custom dialer for upstream proxy
+	CustomDialer, err = NewUpstreamDialer(Config.Upstream, time.Second*10)
 	if err != nil {
 		log.Fatal(err)
 	}
