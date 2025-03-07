@@ -1,17 +1,20 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
 
 	tlsclient "github.com/bogdanfinn/tls-client"
+	utls "github.com/bogdanfinn/utls"
 )
 
 // Global instance of the tls-client
@@ -45,31 +48,90 @@ func initTLSClient() error {
 	return err
 }
 
-// Create a TLS connection with the browser fingerprint
+// Create a TLS connection with the browser fingerprint using direct utls for proper fingerprinting
 func customTLSWrap(conn net.Conn, sni string) (net.Conn, error) {
-	// This is a simpler approach that still uses tls-client's browser profiles
-	// but applies them directly to a TLS connection rather than using the HTTP client
+	// Get the client hello ID based on the configured browser profile
+	clientHelloID := getClientHelloID(Config.BrowserProfile)
 	
-	// Import tls-client's configuration, but use it with our existing connection
-	// Note: We're not using the full profile capabilities yet, just identifying which browser we're emulating
-	tlsConfig := &tls.Config{
+	// Create a utls connection with the specific client hello
+	utlsConn := utls.UClient(conn, &utls.Config{
 		ServerName:         sni,
 		InsecureSkipVerify: true,
-		// Use the NextProtos from the profile if possible
-		NextProtos:         []string{"h2", "http/1.1"},
-	}
-	
-	// Create a custom TLS client connection
-	tlsClient := tls.Client(conn, tlsConfig)
-	
+	}, clientHelloID)
+
 	// Perform the handshake
-	if err := tlsClient.Handshake(); err != nil {
+	if err := utlsConn.Handshake(); err != nil {
 		return nil, fmt.Errorf("TLS handshake failed: %v", err)
 	}
 	
 	log.Printf("Connected to %s using browser profile: %s", sni, Config.BrowserProfile)
 	
-	return tlsClient, nil
+	return utlsConn, nil
+}
+
+// Map browser profile names to utls ClientHelloID
+func getClientHelloID(profileName string) utls.ClientHelloID {
+	// Map common profile names to ClientHelloID values
+	switch strings.ToLower(profileName) {
+	case "chrome133", "chrome133a":
+		return utls.HelloChrome_Auto
+	case "chrome124":
+		return utls.HelloChrome_Auto
+	case "chrome120":
+		return utls.HelloChrome_Auto
+	case "chrome110":
+		return utls.HelloChrome_110
+	case "chrome107":
+		return utls.HelloChrome_107
+	case "chrome104":
+		return utls.HelloChrome_104
+	case "firefox117", "firefox110":
+		return utls.HelloFirefox_Auto
+	case "firefox108":
+		return utls.HelloFirefox_108
+	case "safari18_0", "safari16_0":
+		return utls.HelloSafari_16_0
+	case "safari_ios_18_0", "safari_ios_17_0":
+		return utls.HelloIOS_Auto
+	case "safari_ios_16_0":
+		return utls.HelloIOS_16_0
+	default:
+		// Use Chrome as the default
+		return utls.HelloChrome_Auto
+	}
+}
+
+// Use tls-client to fetch a URL via the proxy, for testing
+func fetchViaProxy(proxyURL, targetURL string) (*http.Response, error) {
+	options := []tlsclient.HttpClientOption{
+		tlsclient.WithClientProfile(GetClientProfile(Config.BrowserProfile)),
+		tlsclient.WithInsecureSkipVerify(),
+		tlsclient.WithTimeoutSeconds(30),
+	}
+
+	// Parse the proxy URL
+	if proxyURL != "" {
+		proxySetting := map[string]string{
+			"http":  proxyURL,
+			"https": proxyURL,
+		}
+		options = append(options, tlsclient.WithProxyURL(proxyURL))
+		options = append(options, tlsclient.WithProxies(proxySetting))
+	}
+
+	client, err := tlsclient.NewHttpClient(tlsclient.NewNoopLogger(), options...)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create request
+	req, err := http.NewRequest("GET", targetURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Make the request
+	return client.Do(req)
 }
 
 func handleTunneling(w http.ResponseWriter, r *http.Request) {
@@ -133,7 +195,7 @@ func connect(sni string, destConn net.Conn, clientConn net.Conn) {
 
 	// Get the negotiated protocol
 	var protocols string
-	if tlsConn, ok := destTLSConn.(*tls.Conn); ok {
+	if tlsConn, ok := destTLSConn.(*utls.UConn); ok {
 		state := tlsConn.ConnectionState()
 		protocols = state.NegotiatedProtocol
 	}

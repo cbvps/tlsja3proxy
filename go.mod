@@ -6,6 +6,7 @@ toolchain go1.22.4
 
 require (
 	github.com/bogdanfinn/tls-client v1.8.0
+	github.com/bogdanfinn/utls v1.6.5
 	github.com/cloudflare/cfssl v1.6.4
 	golang.org/x/net v0.31.0
 )
@@ -13,7 +14,6 @@ require (
 require (
 	github.com/andybalholm/brotli v1.1.1 // indirect
 	github.com/bogdanfinn/fhttp v0.5.34 // indirect
-	github.com/bogdanfinn/utls v1.6.5 // indirect
 	github.com/cloudflare/circl v1.5.0 // indirect
 	github.com/go-logr/logr v1.2.4 // indirect
 	github.com/google/certificate-transparency-go v1.1.4 // indirect
