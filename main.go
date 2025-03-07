@@ -21,7 +21,7 @@ func main() {
 	flag.StringVar(&Config.Addr, "addr", "", "proxy listen host")
 	flag.StringVar(&Config.Port, "port", "8080", "proxy listen port")
 	flag.StringVar(&Config.BrowserProfile, "browser", "chrome133", "browser profile to emulate (chrome133, firefox117, safari18_0, etc.)")
-	flag.StringVar(&Config.Upstream, "upstream", "", "upstream proxy, e.g. 127.0.0.1:1080, socks5 only")
+	flag.StringVar(&Config.Upstream, "upstream", "", "upstream SOCKS5 proxy in format host:port:user:pass or host:port")
 	flag.BoolVar(&Config.Debug, "debug", false, "enable debug")
 	flag.Parse()
 
@@ -75,6 +75,11 @@ func main() {
 		"HTTP Proxy Server listen at %s:%s, with browser profile: %s\n",
 		Config.Addr, Config.Port, Config.BrowserProfile,
 	)
+
+	if Config.Upstream != "" {
+		fmt.Printf("Using upstream SOCKS5 proxy: %s\n", Config.Upstream)
+	}
+
 	err = server.ListenAndServe()
 	if err != nil {
 		log.Fatal(err)

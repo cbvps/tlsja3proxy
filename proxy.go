@@ -110,6 +110,27 @@ func fetchViaProxy(proxyURL, targetURL string) (*http.Response, error) {
 		options = append(options, tlsclient.WithProxyUrl(proxyURL))
 	}
 
+	// If we have an upstream SOCKS5 proxy configured, use it
+	if Config.Upstream != "" {
+		parts := strings.Split(Config.Upstream, ":")
+		if len(parts) >= 2 {
+			host := parts[0]
+			port := parts[1]
+
+			socksProxy := fmt.Sprintf("socks5://%s:%s", host, port)
+
+			// If we have credentials
+			if len(parts) >= 4 {
+				user := parts[2]
+				pass := parts[3]
+				socksProxy = fmt.Sprintf("socks5://%s:%s@%s:%s", user, pass, host, port)
+			}
+
+			log.Printf("Configuring tls-client to use upstream SOCKS5 proxy: %s", socksProxy)
+			options = append(options, tlsclient.WithProxyUrl(socksProxy))
+		}
+	}
+
 	client, err := tlsclient.NewHttpClient(tlsclient.NewNoopLogger(), options...)
 	if err != nil {
 		return nil, err
