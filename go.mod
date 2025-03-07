@@ -1,4 +1,4 @@
-module github.com/lylemi/tlsja3proxy
+module github.com/cbvps/tlsja3proxy
 
 go 1.22.0
 
