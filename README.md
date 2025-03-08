@@ -1,4 +1,4 @@
-# tlsja3proxy
+∏# tlsja3proxy
 
 A HTTP/HTTPS proxy that modifies TLS fingerprints using uTLS, allowing emulation of various modern browsers.
 
